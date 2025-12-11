@@ -585,7 +585,7 @@ class PetriNetGenerator:
                 t_id = reaction['id']
                 safe_t_id = safe_reaction_names[t_id]
                 orig_x, orig_y = self.positions.get(t_id, (200, 100 + i * 100))
-                x = OFFSET_X + orig_x * SCALE
+                x = OFFSET_X + orig_x * SCALECompare
                 y = OFFSET_Y + orig_y * SCALE
                 
                 # Get rate value directly (numeric, not parameter reference)

@@ -31,7 +31,6 @@
 \addbibresource{referencias.bib}
 
 \runninghead{Pipeline para Modelagem de Circuitos Genéticos via SPN e ODE}
-\footertext{\textit{Ciências da Computação} (2025) - Estudo Científico}
 \setcounter{page}{1}
 
 %----------------------------------------------------------------------------------------
@@ -41,7 +40,7 @@
 \title{Pipeline Automatizado para Modelagem e Simulação de Circuitos Genéticos: Integração de Redes de Petri Estocásticas, Algoritmo de Gillespie e Equações Diferenciais Ordinárias}
 
 \author{%
-	Kauan Elias Schneider Fank\textsuperscript{1}\thanks{Corresponding author: \href{mailto:kauan.fank@ufsc.br}{kauan.fank@ufsc.br}}
+	Kauan Elias Schneider Fank
 }
 
 \date{\footnotesize
@@ -121,11 +120,22 @@ O Systems Biology Markup Language (SBML) é o padrão internacional para represe
 
 \subsection{Redes de Petri Estocásticas}
 
-Uma Rede de Petri é um grafo bipartido $N = (P, T, F, W, M_0)$ onde $P$ são lugares (espécies moleculares), $T$ são transições (reações), $F$ são arcos direcionados, $W$ são pesos dos arcos, e $M_0$ é a marcação inicial. A extensão estocástica (SPN) associa a cada transição $t_j$ uma taxa de disparo $\lambda_j$, transformando a rede em um processo de Markov. A função de propensidade é:
+Uma Rede de Petri é formalmente definida como uma tupla $N = (P, T, F, W, M_0)$, onde:
+\begin{itemize}
+    \item $P$ --- conjunto de \textbf{lugares} (representam espécies moleculares)
+    \item $T$ --- conjunto de \textbf{transições} (representam reações bioquímicas)
+    \item $F \subseteq (P \times T) \cup (T \times P)$ --- conjunto de \textbf{arcos direcionados}
+    \item $W: F \rightarrow \mathbb{N}$ --- função de \textbf{pesos} dos arcos (coeficientes estequiométricos)
+    \item $M_0: P \rightarrow \mathbb{N}_0$ --- \textbf{marcação inicial} (quantidades iniciais das espécies)
+\end{itemize}
 
+A extensão estocástica (SPN) associa a cada transição $t_j$ uma \textbf{taxa de disparo} $\lambda_j$, transformando a rede em um processo de Markov em tempo contínuo. A função de propensidade $a_j(M)$ determina a probabilidade de disparo da transição $t_j$ dado o estado atual $M$:
 \begin{equation}
     a_j(M) = \lambda_j \cdot \prod_{p_i \in \bullet t_j} \binom{M(p_i)}{W(p_i, t_j)}
 \end{equation}
+
+\noindent onde $\bullet t_j$ denota o conjunto de lugares de entrada da transição $t_j$, $M(p_i)$ é o número de tokens (moléculas) no lugar $p_i$, e o coeficiente binomial contabiliza as combinações possíveis de reagentes.
+
 
 \subsection{Algoritmo de Gillespie (SSA)}
 
@@ -436,7 +446,7 @@ O pipeline desenvolvido oferece uma ferramenta acessível para educação e pesq
 
 \subsection{Trabalhos Futuros}
 
-Extensões planejadas incluem: análise de sensibilidade paramétrica para identificar parâmetros críticos; suporte a SBML Level 3 com extensões (comp, fbc); interface web interativa; e integração com ferramentas de otimização para design de circuitos \textit{de novo}.
+Extensões possíveis para o projeto incluem: análise de sensibilidade paramétrica para identificar parâmetros críticos; interface web interativa; e integração com ferramentas de otimização para design de circuitos.
 
 \printbibliography
 

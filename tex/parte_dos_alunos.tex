@@ -11,10 +11,12 @@ Para representar o Repressilator em Redes de Petri, estabelecemos a seguinte cor
 
 O modelo considera as seguintes reações básicas para cada gene $i$ (onde $j$ é o repressor de $i$):
 
-1. \textbf{Transcrição:} DNA $\xrightarrow{k_{trans}}$ DNA + mRNA$_i$ (inibida por Proteína$_j$).
-2. \textbf{Tradução:} mRNA$_i$ $\xrightarrow{k_{trad}}$ mRNA$_i$ + Proteína$_i$.
-3. \textbf{Degradação de mRNA:} mRNA$_i$ $\xrightarrow{k_{dm}}$ $\emptyset$.
-4. \textbf{Degradação de Proteína:} Proteína$_i$ $\xrightarrow{k_{dp}}$ $\emptyset$.
+\begin{enumerate}
+    \item \textbf{Transcrição:} DNA $\xrightarrow{k_{trans}}$ DNA + mRNA$_i$ (inibida por Proteína$_j$).
+    \item \textbf{Tradução:} mRNA$_i$ $\xrightarrow{k_{trad}}$ mRNA$_i$ + Proteína$_i$.
+    \item \textbf{Degradação de mRNA:} mRNA$_i$ $\xrightarrow{k_{dm}}$ $\varnothing$.
+    \item \textbf{Degradação de Proteína:} Proteína$_i$ $\xrightarrow{k_{dp}}$ $\varnothing$.
+\end{enumerate}
 
 \subsection{Definição das Taxas de Disparo}
 As taxas estocásticas ($\lambda$) foram derivadas das constantes cinéticas descritas em~\cite{elowitz2000}. A função de propensão para a transcrição inibida segue a cinética de Hill:
