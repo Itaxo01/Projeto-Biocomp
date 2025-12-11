@@ -1,0 +1,4 @@
+/output/*
+/tools/*
+/__pycache__/*
+/venv/*
