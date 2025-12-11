@@ -29,7 +29,7 @@ def _gillespie_worker(args: Tuple) -> Dict[str, Any]:
     It receives all necessary data as arguments (no class instance).
     """
     (duration, label, initial_state, parameters, reactions, 
-     function_defs, assignment_rules, max_steps) = args
+     function_defs, assignment_rules, max_steps, time_symbol, events) = args
     
     # Suppress warnings in worker process
     warnings.filterwarnings('ignore', category=RuntimeWarning)
@@ -37,6 +37,10 @@ def _gillespie_worker(args: Tuple) -> Dict[str, Any]:
     
     time = 0.0
     state = initial_state.copy()
+    params = parameters.copy()  # Local copy of parameters (events can modify them)
+    
+    # Track event trigger states for edge detection
+    event_prev_state = {evt['id']: False for evt in events}
     
     times = [0.0]
     history = {sp: [count] for sp, count in state.items()}
@@ -55,6 +59,55 @@ def _gillespie_worker(args: Tuple) -> Dict[str, Any]:
                 except:
                     pass
         return ctx
+    
+    # Helper: evaluate event trigger
+    def evaluate_trigger(trigger_formula, ctx):
+        if not trigger_formula:
+            return False
+        formula = trigger_formula
+        formula = re.sub(r'\band\b', ' and ', formula)
+        formula = re.sub(r'\bor\b', ' or ', formula)
+        formula = re.sub(r'\bnot\b', ' not ', formula)
+        try:
+            return bool(eval(formula, {"__builtins__": {}}, ctx))
+        except:
+            return False
+    
+    # Helper: check and execute events
+    def check_events(st, t, prms, prev_states):
+        if not events:
+            return st, prms
+        st = st.copy()
+        ctx = {**prms, **st}
+        ctx['time'] = float(t)
+        ctx['T'] = float(t)
+        if time_symbol and time_symbol not in ('time', 'T'):
+            ctx[time_symbol] = float(t)
+        ctx.update({k: getattr(np, k) for k in ['exp', 'log', 'sqrt', 'sin', 'cos', 'pow', 'floor', 'ceil', 'abs']})
+        ctx['math'] = math
+        ctx = evaluate_rules(ctx)
+        
+        for event in events:
+            eid = event['id']
+            trigger = event.get('trigger', '')
+            curr_trig = evaluate_trigger(trigger, ctx)
+            prev_trig = prev_states.get(eid, False)
+            
+            if curr_trig and not prev_trig:  # Rising edge
+                for assgn in event.get('assignments', []):
+                    var = assgn['variable']
+                    form = assgn['formula']
+                    try:
+                        val = float(eval(form, {"__builtins__": {}}, ctx))
+                        if var in st:
+                            st[var] = val
+                        elif var in prms:
+                            prms[var] = val
+                        ctx[var] = val
+                    except:
+                        pass
+            prev_states[eid] = curr_trig
+        return st, prms
     
     # Helper: create callable from function definition
     def make_func(arg_names, formula, base_ctx):
@@ -81,7 +134,12 @@ def _gillespie_worker(args: Tuple) -> Dict[str, Any]:
     
     while time < duration and step_count < max_steps:
         # Build context
-        context = {**parameters, **state}
+        context = {**params, **state}
+        # Inject simulation time variable (both 'time' and the model's time_symbol)
+        context['time'] = float(time)
+        context['T'] = float(time)
+        if time_symbol and time_symbol not in ('time', 'T'):
+            context[time_symbol] = float(time)
         context.update({k: getattr(np, k) for k in ['exp', 'log', 'sqrt', 'sin', 'cos', 'pow', 'floor', 'ceil', 'abs']})
         context['math'] = math
         context = evaluate_rules(context)
@@ -156,6 +214,9 @@ def _gillespie_worker(args: Tuple) -> Dict[str, Any]:
             
             step_count += 1
         
+        # Check and execute SBML events
+        state, params = check_events(state, time, params, event_prev_state)
+        
         # Record history (subsample to save memory)
         if step_count <= 10000 or step_count % 10 == 0:
             times.append(time)
@@ -208,8 +269,16 @@ class GillespieSimulator:
         
         # 5. Load Assignment Rules (for dynamic parameter updates during simulation)
         self.assignment_rules = self.data.get("assignment_rules", [])
+        
+        # 6. Load Time Info (time symbol and unit from SBML)
+        self.time_info = self.data.get("time_info", {
+            "time_symbol": "time",
+            "time_unit": "dimensionless",
+            "time_scale": 1.0
+        })
+        self.time_symbol = self.time_info.get("time_symbol", "time")
 
-        # 6. Load Reactions and Check for Missing Parameters
+        # 7. Load Reactions and Check for Missing Parameters
         for rxn in self.data.get("reactions", []):
             # Extract local parameters if any
             local_params = {p['id']: float(p['value']) for p in rxn.get("local_parameters", [])}
@@ -250,6 +319,11 @@ class GillespieSimulator:
                 "reactants": rxn.get("reactants", []),
                 "local_params": local_params
             })
+        
+        # 8. Load Events (SBML events with triggers and assignments)
+        self.events = self.data.get("events", [])
+        # Track previous trigger state for edge detection (False->True transition)
+        self.event_prev_state = {evt['id']: False for evt in self.events}
 
     def _heuristic_guess(self, name: str) -> float:
         """
@@ -281,7 +355,78 @@ class GillespieSimulator:
                 pass  # Keep previous value if evaluation fails
         return context
 
-    def _calculate_propensities(self, current_state: Dict[str, float]) -> Tuple[np.ndarray, float]:
+    def _evaluate_trigger(self, trigger_formula: str, context: Dict[str, Any]) -> bool:
+        """
+        Evaluates an event trigger formula and returns True/False.
+        Handles SBML-style boolean operators.
+        """
+        if not trigger_formula:
+            return False
+        
+        # Convert SBML boolean operators to Python
+        formula = trigger_formula
+        formula = re.sub(r'\band\b', ' and ', formula)
+        formula = re.sub(r'\bor\b', ' or ', formula)
+        formula = re.sub(r'\bnot\b', ' not ', formula)
+        
+        try:
+            result = eval(formula, {"__builtins__": {}}, context)
+            return bool(result)
+        except Exception:
+            return False
+
+    def _check_and_execute_events(self, state: Dict[str, float], current_time: float) -> Dict[str, float]:
+        """
+        Checks all event triggers and executes event assignments if triggered.
+        Returns the (potentially modified) state dictionary.
+        """
+        if not self.events:
+            return state
+        
+        state = state.copy()
+        
+        # Build evaluation context
+        context = {**self.parameters, **state}
+        context['time'] = float(current_time)
+        context['T'] = float(current_time)
+        if self.time_symbol not in ('time', 'T'):
+            context[self.time_symbol] = float(current_time)
+        context.update({k: getattr(np, k) for k in ['exp', 'log', 'sqrt', 'sin', 'cos', 'pow', 'floor', 'ceil', 'abs']})
+        context['math'] = math
+        context = self._evaluate_assignment_rules(context)
+        
+        for event in self.events:
+            event_id = event['id']
+            trigger_formula = event.get('trigger', '')
+            
+            current_trigger = self._evaluate_trigger(trigger_formula, context)
+            prev_trigger = self.event_prev_state.get(event_id, False)
+            
+            # Fire on rising edge (False -> True)
+            should_fire = current_trigger and not prev_trigger
+            self.event_prev_state[event_id] = current_trigger
+            
+            if should_fire:
+                for assignment in event.get('assignments', []):
+                    variable = assignment['variable']
+                    formula = assignment['formula']
+                    
+                    try:
+                        new_value = eval(formula, {"__builtins__": {}}, context)
+                        new_value = float(new_value)
+                        
+                        if variable in state:
+                            state[variable] = new_value
+                        elif variable in self.parameters:
+                            self.parameters[variable] = new_value
+                        
+                        context[variable] = new_value
+                    except Exception:
+                        pass
+        
+        return state
+
+    def _calculate_propensities(self, current_state: Dict[str, float], current_time: float = 0.0) -> Tuple[np.ndarray, float]:
         """Calculates the propensity (rate) for each reaction."""
         propensities = []
         
@@ -289,6 +434,12 @@ class GillespieSimulator:
         # Note: eval is used for flexibility with arbitrary SBML formulas. 
         # In production, use a safer parser.
         context = {**self.parameters, **current_state}
+        # Inject simulation time variable
+        context['time'] = float(current_time)
+        context['T'] = float(current_time)
+        # Also inject using model's specific time symbol if different
+        if self.time_symbol not in ('time', 'T'):
+            context[self.time_symbol] = float(current_time)
         # Add math functions
         context.update({k: getattr(np, k) for k in dir(np) if not k.startswith('_')})
         
@@ -357,6 +508,9 @@ class GillespieSimulator:
         # Deep copy initial state
         state = self.species_state.copy()
         
+        # Reset event states for fresh simulation
+        self.event_prev_state = {evt['id']: False for evt in self.events}
+        
         times = [0.0]
         # Track history for all species
         history = {sp: [count] for sp, count in state.items()}
@@ -367,7 +521,7 @@ class GillespieSimulator:
         use_tau_leaping = False
         
         while time < duration and step_count < max_steps:
-            propensities, a_total = self._calculate_propensities(state)
+            propensities, a_total = self._calculate_propensities(state, current_time=time)
             
             if a_total <= 0 or np.isnan(a_total) or np.isinf(a_total):
                 break
@@ -457,6 +611,10 @@ class GillespieSimulator:
             if progress > last_progress and progress <= 10:
                 last_progress = progress
             
+            # Check and execute SBML events
+            if self.events:
+                state = self._check_and_execute_events(state, time)
+            
             # Record history (sample every N steps if too many)
             # To prevent memory issues, we can subsample
             if step_count <= 10000 or step_count % 10 == 0:
@@ -494,7 +652,7 @@ class GillespieSimulator:
         use_tau_leaping = False
         
         while time < duration and step_count < max_steps:
-            propensities, a_total = self._calculate_propensities(state)
+            propensities, a_total = self._calculate_propensities(state, current_time=time)
             
             if a_total <= 0 or np.isnan(a_total) or np.isinf(a_total):
                 break
@@ -738,7 +896,9 @@ class GillespieSimulator:
             self.reactions,  # List of dicts - serializable
             self.function_defs,  # Dict - serializable
             self.assignment_rules,  # List - serializable
-            500000  # max_steps
+            500000,  # max_steps
+            self.time_symbol,  # time symbol from SBML (e.g., 'time' or 'T')
+            self.events  # SBML events (triggers and assignments)
         )
 
     def _estimate_input_high_value(self, input_sp: str) -> float:
@@ -1204,8 +1364,16 @@ class ODESimulator:
         
         # 5. Load Assignment Rules
         self.assignment_rules = self.data.get("assignment_rules", [])
+        
+        # 6. Load Time Info (time symbol and unit from SBML)
+        self.time_info = self.data.get("time_info", {
+            "time_symbol": "time",
+            "time_unit": "dimensionless",
+            "time_scale": 1.0
+        })
+        self.time_symbol = self.time_info.get("time_symbol", "time")
 
-        # 6. Load Reactions
+        # 7. Load Reactions
         for rxn in self.data.get("reactions", []):
             local_params = {p['id']: float(p['value']) for p in rxn.get("local_parameters", [])}
             formula = rxn.get('kinetic_law', '')
@@ -1217,6 +1385,13 @@ class ODESimulator:
                     "reactants": rxn.get("reactants", []),
                     "local_params": local_params
                 })
+        
+        # 8. Load Events (SBML events with triggers and assignments)
+        self.events = self.data.get("events", [])
+        # Track which events have been triggered (for non-persistent triggers)
+        self.event_triggered = {evt['id']: False for evt in self.events}
+        # Track previous trigger state for edge detection
+        self.event_prev_state = {evt['id']: False for evt in self.events}
 
     def _create_function(self, arg_names: List[str], formula: str, base_context: Dict) -> callable:
         """Creates a callable function from SBML function definition."""
@@ -1247,6 +1422,128 @@ class ODESimulator:
                 pass
         return context
 
+    def _build_eval_context(self, state: np.ndarray, t: float) -> Dict[str, Any]:
+        """
+        Builds the evaluation context with all variables needed for formula evaluation.
+        This is shared between derivatives calculation and event evaluation.
+        """
+        context = {**self.parameters}
+        for i, sp_id in enumerate(self.species_ids):
+            context[sp_id] = state[i]
+        
+        # Inject simulation time variable
+        context['time'] = float(t)
+        context['T'] = float(t)
+        if self.time_symbol not in ('time', 'T'):
+            context[self.time_symbol] = float(t)
+        
+        # Add numpy functions
+        context.update({k: getattr(np, k) for k in dir(np) if not k.startswith('_')})
+        
+        # Add standard math operators for boolean expressions
+        context['and_'] = lambda a, b: a and b
+        context['or_'] = lambda a, b: a or b
+        context['not_'] = lambda a: not a
+        context['gt'] = lambda a, b: a > b
+        context['lt'] = lambda a, b: a < b
+        context['geq'] = lambda a, b: a >= b
+        context['leq'] = lambda a, b: a <= b
+        context['eq'] = lambda a, b: abs(a - b) < 1e-10
+        context['neq'] = lambda a, b: abs(a - b) >= 1e-10
+        
+        # Evaluate assignment rules
+        context = self._evaluate_assignment_rules(context)
+        
+        # Add user-defined functions
+        for func_id, func_info in self.function_defs.items():
+            args = func_info.get('arguments', [])
+            formula = func_info.get('formula', '0')
+            if formula != 'NaN' and formula is not None:
+                context[func_id] = self._create_function(args, formula, context)
+            else:
+                context[func_id] = lambda *args: 0.0
+        
+        return context
+
+    def _evaluate_trigger(self, trigger_formula: str, context: Dict[str, Any]) -> bool:
+        """
+        Evaluates an event trigger formula and returns True/False.
+        Handles SBML-style boolean operators.
+        """
+        if not trigger_formula:
+            return False
+        
+        # Convert SBML boolean operators to Python
+        formula = trigger_formula
+        # Handle 'and' operator (SBML uses 'and' or '&&')
+        formula = re.sub(r'\band\b', ' and ', formula)
+        # Handle 'or' operator
+        formula = re.sub(r'\bor\b', ' or ', formula)
+        # Handle 'not' operator
+        formula = re.sub(r'\bnot\b', ' not ', formula)
+        
+        try:
+            result = eval(formula, {"__builtins__": {}}, context)
+            return bool(result)
+        except Exception:
+            return False
+
+    def _check_and_execute_events(self, state: np.ndarray, t: float) -> np.ndarray:
+        """
+        Checks all event triggers and executes event assignments if triggered.
+        Returns the (potentially modified) state array.
+        
+        Event firing logic:
+        - An event fires when its trigger transitions from False to True
+        - For persistent triggers, it stays armed while true
+        - For non-persistent triggers, it can only fire once per true period
+        """
+        if not self.events:
+            return state
+        
+        state = state.copy()  # Don't modify original
+        context = self._build_eval_context(state, t)
+        
+        for event in self.events:
+            event_id = event['id']
+            trigger_formula = event.get('trigger', '')
+            
+            # Evaluate current trigger state
+            current_trigger = self._evaluate_trigger(trigger_formula, context)
+            prev_trigger = self.event_prev_state.get(event_id, False)
+            
+            # Check for rising edge (False -> True transition)
+            should_fire = current_trigger and not prev_trigger
+            
+            # Update previous state for next check
+            self.event_prev_state[event_id] = current_trigger
+            
+            if should_fire:
+                # Execute event assignments
+                for assignment in event.get('assignments', []):
+                    variable = assignment['variable']
+                    formula = assignment['formula']
+                    
+                    try:
+                        new_value = eval(formula, {"__builtins__": {}}, context)
+                        new_value = float(new_value)
+                        
+                        # Update state if it's a species
+                        if variable in self.species_ids:
+                            idx = self.species_ids.index(variable)
+                            state[idx] = new_value
+                        # Update parameters if it's a parameter
+                        elif variable in self.parameters:
+                            self.parameters[variable] = new_value
+                        
+                        # Update context for subsequent assignments in same event
+                        context[variable] = new_value
+                        
+                    except Exception:
+                        pass
+        
+        return state
+
     def _derivatives(self, state: np.ndarray, t: float) -> np.ndarray:
         """
         Computes the derivatives (dX/dt) for all species.
@@ -1256,6 +1553,13 @@ class ODESimulator:
         context = {**self.parameters}
         for i, sp_id in enumerate(self.species_ids):
             context[sp_id] = state[i]
+        
+        # Inject simulation time variable
+        context['time'] = float(t)
+        context['T'] = float(t)
+        # Also inject using model's specific time symbol if different
+        if self.time_symbol not in ('time', 'T'):
+            context[self.time_symbol] = float(t)
         
         # Add numpy functions
         context.update({k: getattr(np, k) for k in dir(np) if not k.startswith('_')})
@@ -1303,7 +1607,10 @@ class ODESimulator:
 
     def run_simulation(self, duration: float, num_points: int = 1000) -> Dict[str, Any]:
         """
-        Runs ODE simulation using scipy's odeint.
+        Runs ODE simulation with support for SBML events.
+        
+        Uses step-by-step integration to check event triggers at each time point.
+        When an event fires, the state is modified according to event assignments.
         
         Args:
             duration: Total simulation time
@@ -1314,20 +1621,71 @@ class ODESimulator:
         """
         from scipy.integrate import odeint
         
+        # Reset event states for fresh simulation
+        self.event_prev_state = {evt['id']: False for evt in self.events}
+        
         # Initial state vector
         y0 = np.array([self.species_state[sp_id] for sp_id in self.species_ids])
         
         # Time points
-        t = np.linspace(0, duration, num_points)
+        t_points = np.linspace(0, duration, num_points)
+        dt = t_points[1] - t_points[0] if len(t_points) > 1 else duration / num_points
         
-        # Solve ODE
-        print(f"    Running ODE integration (duration={duration}, points={num_points})...")
-        solution = odeint(self._derivatives, y0, t)
+        has_events = len(self.events) > 0
+        
+        if has_events:
+            print(f"    Running ODE integration with {len(self.events)} events (duration={duration}, points={num_points})...")
+            
+            # Step-by-step integration with event checking
+            all_times = [0.0]
+            all_states = [y0.copy()]
+            
+            current_state = y0.copy()
+            current_time = 0.0
+            
+            # Use smaller steps for event detection
+            event_check_dt = min(dt, duration / 10000)  # At least 10000 checks
+            
+            while current_time < duration:
+                next_time = min(current_time + event_check_dt, duration)
+                
+                # Integrate one small step
+                t_span = [current_time, next_time]
+                sol = odeint(self._derivatives, current_state, t_span)
+                current_state = sol[-1]
+                current_time = next_time
+                
+                # Check and execute events
+                current_state = self._check_and_execute_events(current_state, current_time)
+                
+                # Record state at desired output times
+                if len(all_times) < num_points and current_time >= all_times[-1] + dt * 0.99:
+                    all_times.append(current_time)
+                    all_states.append(current_state.copy())
+            
+            # Ensure we have the final state
+            if all_times[-1] < duration:
+                all_times.append(duration)
+                all_states.append(current_state.copy())
+            
+            # Convert to arrays
+            solution = np.array(all_states)
+            t = np.array(all_times)
+            
+        else:
+            # No events - use standard odeint (faster)
+            print(f"    Running ODE integration (duration={duration}, points={num_points})...")
+            t = t_points
+            solution = odeint(self._derivatives, y0, t)
         
         # Convert to history dict
         history = {}
         for i, sp_id in enumerate(self.species_ids):
             history[sp_id] = solution[:, i].tolist()
+        
+        # Also track parameter changes for events that modify parameters
+        # (Store final parameter values in history for reference)
+        history['_parameters'] = self.parameters.copy()
         
         return {"time": t.tolist(), "history": history}
 

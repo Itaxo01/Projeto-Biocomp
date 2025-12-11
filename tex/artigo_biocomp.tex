@@ -14,6 +14,8 @@
 \usepackage{booktabs}
 \usepackage{multirow}
 \usepackage{hyperref}
+\usepackage{cuted}
+\usepackage{capt-of} % Necessário para colocar legenda fora de 'figure'
 
 \graphicspath{{Figures/}}
 
@@ -414,7 +416,7 @@ Este estudo apresenta três contribuições principais para a área de modelagem
 
 \subsection{Comparação com Trabalhos Relacionados}
 
-Ferramentas existentes como COPASI~\cite{karlebach2008} e CellDesigner oferecem funcionalidades similares, porém com interfaces gráficas complexas e curvas de aprendizado íngremes. Nosso pipeline, implementado em Python com módulos independentes, prioriza:
+Ferramentas existentes como COPASI~\cite{karlebach2008} e CellDesigner oferecem funcionalidades similares, com integração nativa com arquivos SBML. O diferencial do nosso pipeline é a representação visual dos circuitos como redes de petri, além da funcionalidade simplificada de seleção automática do método de simulação, que não é comumente encontrada em outras ferramentas. A modularidade do código também facilita a extensão e adaptação para novos modelos e métodos. Seus diferenciais:
 \begin{itemize}
     \item \textbf{Transparência}: Código aberto e estrutura JSON editável
     \item \textbf{Reprodutibilidade}: Execução via linha de comando, integrável em workflows automatizados
@@ -446,7 +448,9 @@ O pipeline desenvolvido oferece uma ferramenta acessível para educação e pesq
 
 \subsection{Trabalhos Futuros}
 
-Extensões possíveis para o projeto incluem: análise de sensibilidade paramétrica para identificar parâmetros críticos; interface web interativa; e integração com ferramentas de otimização para design de circuitos.
+Há melhorias possíveis para o pipeline, e elas incluem: análise de sensibilidade paramétrica para identificar parâmetros críticos; heurística de seleção automática de taxas de reação não identificadas a partir de LLM's; interface interativa com a possibilidade de regulação dos parâmetros via interface; e integração com ferramentas de otimização para design de circuitos já existentes.
+Também há algumas limitações atuais do modelo. Ele não lida bem com as unidades de tempo estabelecidas no arquivo SBML, o que pode levar a discrepâncias na comparação com dados experimentais. Além disso, nem todos os circuitos são modelados com precisão utilizando o ODE, alguns podem esperar comportamentos matemáticos mais complexos.
+O Gillespie vs ODE pode apresentar divergências também, devido a variáveis aleatórias inerentes ao modelo estocástico. Uma variável que é fadada a decair a zero em uma simulação por ODE pode não decair em uma simulação por Gillespie, causando diferenças significativas no comportamento do sistema.
 
 \printbibliography
 

@@ -57,6 +57,12 @@ class SBMLParser:
         # Extract assignment rules (for dynamic evaluation during simulation)
         assignment_rules = self._extract_assignment_rules()
         
+        # Extract time-related information (units, symbol)
+        time_info = self._extract_time_info()
+        
+        # Extract SBML events (triggers, delays, assignments)
+        events = self._extract_events()
+        
         # Process Assignment Rules to update initial parameter values
         parameters = self._process_assignment_rules(parameters)
 
@@ -75,7 +81,9 @@ class SBMLParser:
             "parameters": parameters,
             "reactions": reactions,
             "function_definitions": function_defs,
-            "assignment_rules": assignment_rules
+            "assignment_rules": assignment_rules,
+            "time_info": time_info,
+            "events": events
         }
         
         return data
@@ -91,6 +99,162 @@ class SBMLParser:
                     "formula": rule.getFormula()
                 })
         return rules
+
+    def _extract_time_info(self) -> Dict[str, Any]:
+        """
+        Extracts time-related information from the SBML model.
+        Returns a dict with:
+          - time_symbol: The symbol used for time in formulas (e.g., 'time', 'T')
+          - time_unit: The unit definition for time (e.g., 'second', 'hour')
+          - time_scale: Conversion factor to seconds (1.0 if already seconds)
+        """
+        time_info = {
+            "time_symbol": "time",  # Default SBML time symbol
+            "time_unit": "dimensionless",
+            "time_scale": 1.0  # seconds per model time unit
+        }
+        
+        # Check for time unit definition
+        for i in range(self.model.getNumUnitDefinitions()):
+            unit_def = self.model.getUnitDefinition(i)
+            unit_id = unit_def.getId()
+            
+            if unit_id.lower() == 'time':
+                # Parse the unit definition
+                for j in range(unit_def.getNumUnits()):
+                    unit = unit_def.getUnit(j)
+                    kind = libsbml.UnitKind_toString(unit.getKind())
+                    multiplier = unit.getMultiplier()
+                    scale = unit.getScale()  # 10^scale
+                    exponent = unit.getExponent()
+                    
+                    # Calculate conversion factor
+                    factor = multiplier * (10 ** scale) ** exponent
+                    
+                    if kind == 'second':
+                        time_info["time_unit"] = "second"
+                        time_info["time_scale"] = factor
+                    elif kind == 'hour':
+                        time_info["time_unit"] = "hour"
+                        time_info["time_scale"] = factor * 3600  # convert to seconds
+                    elif kind == 'minute':
+                        time_info["time_unit"] = "minute"
+                        time_info["time_scale"] = factor * 60
+                    elif kind == 'day':
+                        time_info["time_unit"] = "day"
+                        time_info["time_scale"] = factor * 86400
+                    else:
+                        time_info["time_unit"] = kind
+                        time_info["time_scale"] = factor
+        
+        # Also check if model uses 'T' as time symbol (common in some models)
+        # by scanning kinetic laws and event triggers for csymbol time references
+        # Note: libSBML doesn't directly expose this, but we can check reactions
+        for i in range(self.model.getNumReactions()):
+            rxn = self.model.getReaction(i)
+            kl = rxn.getKineticLaw()
+            if kl:
+                formula = kl.getFormula()
+                # If 'T' appears as a standalone token (not part of another word)
+                # and 'time' doesn't, then 'T' is likely the time symbol
+                import re
+                if re.search(r'\bT\b', formula) and not re.search(r'\btime\b', formula):
+                    time_info["time_symbol"] = "T"
+                    break
+        
+        # Check events for time symbol usage
+        for i in range(self.model.getNumEvents()):
+            event = self.model.getEvent(i)
+            trigger = event.getTrigger()
+            if trigger:
+                trigger_math = trigger.getMath()
+                if trigger_math:
+                    formula_str = libsbml.formulaToString(trigger_math)
+                    import re
+                    if re.search(r'\bT\b', formula_str):
+                        time_info["time_symbol"] = "T"
+                        break
+        
+        return time_info
+
+    def _extract_events(self) -> List[Dict[str, Any]]:
+        """
+        Extracts SBML events with triggers, delays, and event assignments.
+        
+        Events in SBML consist of:
+        - trigger: A boolean condition that, when it becomes true, fires the event
+        - delay: Optional time delay between trigger firing and assignment execution
+        - listOfEventAssignments: Variables to modify when the event fires
+        
+        Returns:
+            List of event dictionaries with structure:
+            {
+                "id": str,
+                "name": str,
+                "trigger": str (formula),
+                "trigger_initial_value": bool,
+                "trigger_persistent": bool,
+                "delay": str (formula, usually "0"),
+                "use_values_from_trigger_time": bool,
+                "assignments": [{"variable": str, "formula": str}, ...]
+            }
+        """
+        events = []
+        
+        for i in range(self.model.getNumEvents()):
+            event = self.model.getEvent(i)
+            event_data = {
+                "id": event.getId(),
+                "name": event.getName() if event.getName() else event.getId(),
+                "trigger": "",
+                "trigger_initial_value": True,  # Default: trigger starts as "can fire"
+                "trigger_persistent": True,     # Default: trigger must stay true
+                "delay": "0",
+                "use_values_from_trigger_time": True,
+                "assignments": []
+            }
+            
+            # Extract trigger
+            trigger = event.getTrigger()
+            if trigger:
+                trigger_math = trigger.getMath()
+                if trigger_math:
+                    # Convert MathML to infix string
+                    trigger_formula = libsbml.formulaToString(trigger_math)
+                    # Replace SBML time csymbol with our time variable
+                    # The csymbol for time in SBML is typically represented as 'time' in formula
+                    event_data["trigger"] = trigger_formula
+                
+                # Get trigger properties (SBML Level 3)
+                if trigger.isSetInitialValue():
+                    event_data["trigger_initial_value"] = trigger.getInitialValue()
+                if trigger.isSetPersistent():
+                    event_data["trigger_persistent"] = trigger.getPersistent()
+            
+            # Extract delay
+            delay = event.getDelay()
+            if delay:
+                delay_math = delay.getMath()
+                if delay_math:
+                    event_data["delay"] = libsbml.formulaToString(delay_math)
+            
+            # Extract use values from trigger time (SBML Level 3)
+            if event.isSetUseValuesFromTriggerTime():
+                event_data["use_values_from_trigger_time"] = event.getUseValuesFromTriggerTime()
+            
+            # Extract event assignments
+            for j in range(event.getNumEventAssignments()):
+                ea = event.getEventAssignment(j)
+                assignment_math = ea.getMath()
+                if assignment_math:
+                    event_data["assignments"].append({
+                        "variable": ea.getVariable(),
+                        "formula": libsbml.formulaToString(assignment_math)
+                    })
+            
+            events.append(event_data)
+        
+        return events
 
     def _extract_compartments(self) -> List[Dict[str, Any]]:
         """Extracts compartments information."""
