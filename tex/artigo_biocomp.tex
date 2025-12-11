@@ -1,0 +1,443 @@
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+% Pipeline Automatizado para Modelagem e Simulação de Circuitos Genéticos
+% via Redes de Petri Estocásticas e Equações Diferenciais Ordinárias
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+\PassOptionsToPackage{backend=biber,style=ieee,sorting=nyt}{biblatex}
+\documentclass[a4paper,10pt,twoside]{LTJournalArticle}
+\usepackage{verbatim}
+\usepackage{amsmath}
+\usepackage{amssymb}
+\usepackage{graphicx}
+\usepackage{listings}
+\usepackage{xcolor}
+\usepackage{booktabs}
+\usepackage{multirow}
+\usepackage{hyperref}
+
+\graphicspath{{Figures/}}
+
+% Configuração de código
+\lstset{
+    basicstyle=\ttfamily\footnotesize,
+    breaklines=true,
+    frame=single,
+    backgroundcolor=\color{gray!10},
+    keywordstyle=\color{blue},
+    commentstyle=\color{green!50!black},
+    stringstyle=\color{red!60!black}
+}
+
+\addbibresource{referencias.bib}
+
+\runninghead{Pipeline para Modelagem de Circuitos Genéticos via SPN e ODE}
+\footertext{\textit{Ciências da Computação} (2025) - Estudo Científico}
+\setcounter{page}{1}
+
+%----------------------------------------------------------------------------------------
+%	SEÇÃO DE TÍTULO
+%----------------------------------------------------------------------------------------
+
+\title{Pipeline Automatizado para Modelagem e Simulação de Circuitos Genéticos: Integração de Redes de Petri Estocásticas, Algoritmo de Gillespie e Equações Diferenciais Ordinárias}
+
+\author{%
+	Kauan Elias Schneider Fank\textsuperscript{1}\thanks{Corresponding author: \href{mailto:kauan.fank@ufsc.br}{kauan.fank@ufsc.br}}
+}
+
+\date{\footnotesize
+    \textsuperscript{\textbf{1}}Departamento de Informática e Estatística, Universidade Federal de Santa Catarina
+}
+
+\renewcommand{\maketitlehookd}{%
+	\begin{abstract}
+		\noindent Este trabalho apresenta um pipeline automatizado para modelagem e simulação de circuitos genéticos, integrando três abordagens complementares: Redes de Petri Estocásticas (SPN) para visualização topológica, o Algoritmo de Gillespie para simulação estocástica, e Equações Diferenciais Ordinárias (ODE) para análise determinística. O sistema desenvolvido permite a busca automática de modelos no repositório BioModels, parsing de arquivos SBML, geração de representações em Redes de Petri (PNML e formato GreatSPN), e simulação com seleção automática do método mais apropriado. Validamos o pipeline com cinco circuitos genéticos clássicos: Repressilator, Toggle Switch, Feed-Forward Loop Incoerente Tipo 1, Relógio Circadiano de \textit{N. crassa} e Operon Lac. Os resultados demonstram concordância com dados da literatura, evidenciando a utilidade do sistema como ferramenta educacional e de pesquisa em biologia sintética.
+	\end{abstract}
+}
+
+%----------------------------------------------------------------------------------------
+
+\begin{document}
+
+\maketitle
+
+%----------------------------------------------------------------------------------------
+%	CONTEÚDO DO ARTIGO
+%----------------------------------------------------------------------------------------
+
+\section{Introdução}
+
+\subsection{Contexto e Motivação}
+
+A biologia sintética é um campo interdisciplinar que aplica princípios de engenharia ao design de sistemas biológicos, permitindo a construção de \textbf{circuitos genéticos} --- redes de genes e proteínas que implementam funções computacionais dentro de células vivas~\cite{kitano2002}. Assim como circuitos eletrônicos processam sinais elétricos, circuitos genéticos processam sinais moleculares (concentrações de proteínas, metabólitos, sinais ambientais) para produzir respostas celulares programadas.
+
+Exemplos de circuitos genéticos incluem osciladores (que geram ritmos periódicos), interruptores biestáveis (que armazenam informação binária), e detectores de sinais (que respondem a estímulos específicos). Estes componentes são os blocos fundamentais para aplicações como biossensores, produção de fármacos, e terapias celulares programáveis.
+
+\subsection{Desafios da Modelagem}
+
+Diferente da engenharia tradicional, onde componentes seguem especificações precisas, os circuitos genéticos operam em ambientes celulares caracterizados por:
+\begin{itemize}
+    \item \textbf{Ruído intrínseco}: Flutuações estocásticas devido ao baixo número de moléculas envolvidas (dezenas a milhares de cópias por célula)
+    \item \textbf{Variabilidade molecular}: Diferenças célula-a-célula em concentrações e taxas de reação
+    \item \textbf{Comportamentos não-lineares}: Retroalimentação positiva e negativa que geram dinâmicas complexas~\cite{mcadams1997}
+\end{itemize}
+
+A modelagem computacional torna-se essencial para o design racional de circuitos genéticos, permitindo prever comportamentos antes da construção experimental. Duas abordagens complementares são utilizadas:
+
+\begin{enumerate}
+    \item \textbf{Modelos Determinísticos (ODE):} Representam a dinâmica através de equações diferenciais ordinárias, adequados quando o número de moléculas é grande e flutuações podem ser ignoradas (limite termodinâmico).
+    \item \textbf{Modelos Estocásticos (Gillespie):} Simulam reações individuais como eventos discretos e probabilísticos, capturando o ruído intrínseco essencial em sistemas com baixas contagens moleculares~\cite{gillespie1977}.
+\end{enumerate}
+
+As \textbf{Redes de Petri Estocásticas} (SPN) surgem como uma ferramenta unificadora, permitindo representar visualmente a topologia da rede regulatória enquanto fundamentam matematicamente ambas as abordagens~\cite{chaouiya2007}.
+
+\subsection{Objetivos e Contribuições}
+
+Este trabalho apresenta um \textbf{pipeline automatizado} para modelagem e simulação de circuitos genéticos que:
+\begin{enumerate}
+    \item Busca e baixa modelos do repositório BioModels automaticamente
+    \item Realiza parsing completo de arquivos SBML, incluindo regras de atribuição e funções customizadas
+    \item Gera representações em Redes de Petri (PNML e GreatSPN)
+    \item Executa simulações com \textbf{seleção automática} do método mais apropriado (Gillespie ou ODE)
+    \item Detecta espécies de entrada para análises comparativas ON/OFF
+\end{enumerate}
+
+Validamos o pipeline com cinco circuitos genéticos clássicos da literatura, demonstrando concordância quantitativa e qualitativa com os dados publicados.
+
+%----------------------------------------------------------------------------------------
+%	FUNDAMENTAÇÃO TEÓRICA
+%----------------------------------------------------------------------------------------
+
+\section{Fundamentação Teórica}
+
+\subsection{Formato SBML e Repositório BioModels}
+
+O Systems Biology Markup Language (SBML) é o padrão internacional para representação de modelos biológicos, permitindo intercâmbio entre diferentes ferramentas de simulação. O repositório \textbf{BioModels} hospeda milhares de modelos curados e validados pela comunidade científica. Nosso parser extrai:
+\begin{itemize}
+    \item Espécies moleculares com quantidades iniciais e condições de contorno
+    \item Reações bioquímicas com leis cinéticas (MathML)
+    \item Parâmetros globais e locais, compartimentos e volumes
+    \item Assignment Rules e Function Definitions customizadas
+\end{itemize}
+
+\subsection{Redes de Petri Estocásticas}
+
+Uma Rede de Petri é um grafo bipartido $N = (P, T, F, W, M_0)$ onde $P$ são lugares (espécies moleculares), $T$ são transições (reações), $F$ são arcos direcionados, $W$ são pesos dos arcos, e $M_0$ é a marcação inicial. A extensão estocástica (SPN) associa a cada transição $t_j$ uma taxa de disparo $\lambda_j$, transformando a rede em um processo de Markov. A função de propensidade é:
+
+\begin{equation}
+    a_j(M) = \lambda_j \cdot \prod_{p_i \in \bullet t_j} \binom{M(p_i)}{W(p_i, t_j)}
+\end{equation}
+
+\subsection{Algoritmo de Gillespie (SSA)}
+
+O Stochastic Simulation Algorithm (SSA) simula exatamente a Chemical Master Equation~\cite{gillespie1977}. A cada iteração: (1) calcula propensidades $a_j$ e soma total $a_0$; (2) gera tempo $\tau \sim \text{Exp}(a_0)$; (3) seleciona reação proporcional a $a_j/a_0$; (4) atualiza estado. Para sistemas rápidos ($a_0 > 50000$), utilizamos \textbf{tau-leaping}, que agrupa múltiplas reações em intervalos de tempo.
+
+\subsection{Equações Diferenciais Ordinárias}
+
+No limite de alto número de moléculas, o sistema estocástico é aproximado por EDOs:
+\begin{equation}
+    \frac{d[X_i]}{dt} = \sum_j \nu_{ij} \cdot v_j([X])
+\end{equation}
+onde $\nu_{ij}$ é o coeficiente estequiométrico e $v_j$ a taxa da reação (lei de ação das massas, Hill, Michaelis-Menten, etc.).
+
+%----------------------------------------------------------------------------------------
+%	METODOLOGIA E CIRCUITOS ESTUDADOS
+%----------------------------------------------------------------------------------------
+
+\section{Metodologia}
+
+\subsection{Arquitetura do Pipeline}
+
+O pipeline foi implementado em Python 3.12 e consiste em quatro módulos principais, cada um responsável por uma etapa específica do processamento:
+
+\textbf{1. Módulo de Busca (fetch\_biomodel.py):} Implementa um agente inteligente que consulta a API REST do BioModels. O agente resolve nomes comuns para identificadores oficiais utilizando busca por similaridade textual. Por exemplo, a entrada ``repressilator'' é automaticamente mapeada para BIOMD0000000012. O módulo realiza download do arquivo SBML e validação estrutural básica.
+
+\textbf{2. Parser SBML (parse\_sbml.py):} Utiliza a biblioteca libSBML para extrair informações estruturais do modelo. O parser processa:
+\begin{itemize}
+    \item Espécies moleculares com quantidades iniciais e flags de condição de contorno
+    \item Reações bioquímicas com leis cinéticas em MathML, convertidas para expressões Python avaliáveis
+    \item Parâmetros globais e locais (por reação)
+    \item Compartimentos celulares e seus volumes
+    \item Assignment Rules que definem espécies calculadas dinamicamente
+    \item Function Definitions para funções customizadas (ex: Hill, Michaelis-Menten)
+\end{itemize}
+
+\textbf{3. Gerador de Redes de Petri (generate\_petri\_net.py):} Produz três representações da rede:
+\begin{itemize}
+    \item \textbf{PNG}: Visualização gráfica usando Graphviz com layout Sugiyama hierárquico
+    \item \textbf{PNML}: Petri Net Markup Language, padrão ISO/IEC 15909
+    \item \textbf{GreatSPN}: Formato nativo (.net + .def) para análise em ferramentas especializadas
+\end{itemize}
+
+\textbf{4. Motor de Simulação (simulate\_circuit.py):} Implementa duas classes de simuladores:
+\begin{itemize}
+    \item \texttt{GillespieSimulator}: Algoritmo SSA exato com fallback para tau-leaping quando $a_{total} > 50000$
+    \item \texttt{ODESimulator}: Integração numérica via \texttt{scipy.integrate.odeint} com avaliação dinâmica de Assignment Rules
+\end{itemize}
+Há também a possibilidade de rodar múltiplas execuções paralelas usando \texttt{concurrent.futures.ProcessPoolExecutor} para o método de Gillespie.
+
+\subsection{Seleção Automática do Método}
+
+A função \texttt{choose\_simulator()} analisa as quantidades iniciais das espécies para determinar o método mais apropriado, baseando-se nas referências clássicas de Gillespie (1977)~\cite{gillespie1977} e Higham (2008)~\cite{higham2008}. A heurística é definida como:
+
+\begin{equation}
+\resizebox{0.9\columnwidth}{!}{$
+    \text{método} = \begin{cases}
+        \text{ODE} & \min(X_0) < 0.1 \land \max(X_0) < 100 \\
+        \text{ODE} & \max(X_0) > 10^4 \lor \bar{X}_0 > 5000 \\
+        \text{Gillespie} & 1 \leq \max(X_0) \leq 10^4 \\
+        \text{ODE} & \text{fallback}
+    \end{cases}
+$}
+\end{equation}
+
+Esta heurística considera três regimes distintos:
+\begin{itemize}
+    \item \textbf{Concentrações molares} ($X < 0.1$): Valores muito pequenos e fracionários tipicamente representam concentrações (ex: 0.001 mM), onde flutuações estocásticas são desprezíveis $\rightarrow$ ODE.
+    \item \textbf{Limite termodinâmico} ($X > 10000$): Com grande número de moléculas, a Lei dos Grandes Números garante que efeitos estocásticos são negligíveis. ODE é também computacionalmente mais eficiente.
+    \item \textbf{Regime intermediário} ($1 \leq X \leq 10000$): Contagens discretas onde o ruído de expressão gênica é biologicamente relevante $\rightarrow$ Gillespie.
+\end{itemize}
+
+O usuário pode também forçar o método via argumento de linha de comando (\texttt{gillespie}, \texttt{ode} ou \texttt{auto}).
+
+\subsection{Implementação do Algoritmo de Gillespie}
+
+O simulador estocástico implementa o método direto com as seguintes otimizações:
+
+\begin{enumerate}
+    \item \textbf{Avaliação de propensidades}: Para cada reação $j$, a propensidade $a_j$ é calculada avaliando a lei cinética MathML convertida, utilizando \texttt{eval()} com contexto contendo todas as espécies e parâmetros.
+    
+    \item \textbf{Tau-leaping adaptativo}: Quando $a_0 = \sum_j a_j > 50000$, o algoritmo agrupa múltiplas reações em intervalos $\tau$, amostrando o número de eventos de cada tipo de uma distribuição de Poisson.
+    
+    \item \textbf{Avaliação de Assignment Rules}: A cada passo temporal, regras de atribuição são reavaliadas para atualizar espécies calculadas (ex: IPTG no Toggle Switch).
+\end{enumerate}
+
+\subsection{Implementação do Simulador ODE}
+
+O simulador determinístico calcula derivadas a partir da estrutura de reações:
+
+\begin{equation}
+    \frac{d[X_i]}{dt} = \sum_{j} \left( \nu_{ij}^{prod} - \nu_{ij}^{reag} \right) \cdot v_j
+\end{equation}
+
+onde $v_j$ é a taxa da reação $j$ obtida avaliando sua lei cinética. A integração utiliza \texttt{odeint} com tolerâncias adaptativas.
+
+\subsection{Detecção de Espécies de Entrada}
+
+O sistema identifica automaticamente espécies que funcionam como sinais de entrada através de dois critérios:
+\begin{enumerate}
+    \item Espécies com \texttt{boundaryCondition="true"} no SBML
+    \item Espécies definidas exclusivamente por Assignment Rules
+\end{enumerate}
+
+Quando detectadas, o pipeline executa análise comparativa simulando condições OFF (valor=0) e ON (valor original), permitindo caracterizar a resposta do circuito ao sinal.
+
+\section{Circuitos Estudados}
+
+Para validar o pipeline, selecionamos cinco circuitos genéticos clássicos do repositório BioModels, representando diferentes paradigmas de computação biológica:
+
+\subsection{Repressilator (BIOMD0000000012)}
+
+O \textbf{Repressilator} é um oscilador sintético projetado por Elowitz \& Leibler~\cite{elowitz2000}, composto por três genes repressores (\textit{lacI}, \textit{tetR}, \textit{cI}) conectados em ciclo fechado. Cada proteína reprime a transcrição do gene seguinte, formando um loop de feedback negativo triplo. \textbf{Comportamento esperado}: oscilações sustentadas das três proteínas com defasagem de $\sim$120° e período de 2--3 horas em \textit{E. coli}.
+
+\subsection{Toggle Switch (BIOMD0000000507)}
+
+O \textbf{Toggle Switch} é um circuito biestável projetado por Gardner et al.~\cite{gardner2000}, composto por dois repressores (U e V) que se inibem mutuamente. A presença de IPTG como indutor permite chavear entre os dois estados estáveis. \textbf{Comportamento esperado}: biestabilidade com dois estados estáveis mutuamente exclusivos (``alto U, baixo V'' ou ``baixo U, alto V''), funcionando como memória molecular.
+
+\subsection{I1-FFL --- Feed-Forward Loop Incoerente Tipo 1 (BIOMD0000000696)}
+
+O \textbf{I1-FFL} é um motivo de rede descrito por Boada et al.~\cite{boada2016}, onde um regulador X ativa diretamente Z e também ativa Y, que por sua vez inibe Z. Esta topologia ``incoerente'' gera competição temporal entre as vias. \textbf{Comportamento esperado}: resposta adaptativa com pulso transitório de Z seguido de retorno ao baseline (``fold-change detection'').
+
+\subsection{Relógio Circadiano de \textit{Neurospora crassa} (BIOMD0000000437)}
+
+O \textbf{Circadian Clock} modelado por Tseng et al.~\cite{tseng2012} representa o oscilador molecular do fungo \textit{Neurospora crassa}, baseado no loop de feedback negativo transcricional-traducional entre FRQ e o complexo WCC. \textbf{Comportamento esperado}: oscilações com período $\sim$21.6 horas, delay de 3--7 horas entre \textit{frq} mRNA e FRQ proteína, e expressão constitutiva de \textit{wc-1} mRNA.
+
+\subsection{Operon Lac (BIOMD0000000065)}
+
+O \textbf{Lac Operon} modelado por Yildirim \& Mackey~\cite{yildirim2003} representa o sistema clássico de regulação da expressão gênica em \textit{E. coli} em resposta a lactose. O modelo inclui 5 variáveis: mRNA, $\beta$-galactosidase, alolactose, lactose intracelular e permease. \textbf{Comportamento esperado}: cinética de indução com feedback positivo via permease e alolactose como verdadeiro indutor (não lactose externa).
+
+\subsection{Resumo dos Circuitos}
+
+\begin{table}[h]
+\centering
+\caption{Circuitos Estudados e suas Características}
+\label{tab:circuits}
+\small
+\begin{tabular}{@{}llll@{}}
+\hline
+\textbf{Circuito} & \textbf{Tipo} & \textbf{Método} & \textbf{Referência} \\
+\hline
+Repressilator & Oscilador & Gillespie & \cite{elowitz2000} \\
+Toggle Switch & Biestável & ODE & \cite{gardner2000} \\
+I1-FFL & Adaptativo & ODE & \cite{boada2016} \\
+Circadian Clock & Oscilador & ODE & \cite{tseng2012} \\
+Lac Operon & Regulatório & ODE & \cite{yildirim2003} \\
+\hline
+\end{tabular}
+\end{table}
+
+\input{parte_dos_alunos.tex}
+
+\section{Reprodução dos Experimentos}
+
+\subsection{Requisitos e Instalação}
+
+O pipeline requer Python 3.10+ e Graphviz para visualização. A instalação completa:
+
+\begin{lstlisting}[language=bash]
+# Dependencias do sistema (Ubuntu/Debian)
+sudo apt-get install graphviz python3-venv
+
+# Ambiente virtual Python
+python3 -m venv venv && source venv/bin/activate
+
+# Pacotes Python
+pip install python-libsbml numpy matplotlib \
+            scipy networkx graphviz requests
+\end{lstlisting}
+
+\subsection{Execução do Pipeline}
+
+O script principal aceita quatro parâmetros:
+
+\begin{lstlisting}[language=bash]
+python3 src/run_pipeline.py [dur] [runs] [met] "modelo"
+\end{lstlisting}
+
+\begin{itemize}
+    \item \texttt{dur}: Duração da simulação (unidades do modelo)
+    \item \texttt{runs}: Número de execuções (Gillespie)
+    \item \texttt{met}: ``auto'', ``gillespie'' ou ``ode''
+    \item \texttt{modelo}: Nome ou ID BioModels
+\end{itemize}
+
+\textbf{Exemplos de execução:}
+\begin{lstlisting}[language=bash]
+# Repressilator - oscilador (Gillespie)
+python3 src/run_pipeline.py 100 5 auto "repressilator"
+
+# Toggle Switch - biestavel (ODE)
+python3 src/run_pipeline.py 200 1 ode "toggle switch"
+
+# Circadiano - oscilacoes amortecidas (ODE)
+python3 src/run_pipeline.py 200 1 ode "circadian"
+\end{lstlisting}
+
+\subsection{Saídas Geradas}
+
+Para cada modelo em \texttt{output/<nome>/}:
+
+\begin{itemize}
+    \item \texttt{*\_parsed.json}: Modelo estruturado com parâmetros e reações
+    \item \texttt{*\_petri\_net.png}: Visualização da rede de Petri
+    \item \texttt{*.pnml}: Formato PNML padrão ISO/IEC 15909
+    \item \texttt{*.net + *.def}: Formato GreatSPN para análise
+    \item \texttt{*\_simulation*.png}: Gráficos de simulação
+\end{itemize}
+
+\subsection{Execução Manual dos Módulos}
+
+Cada módulo Python pode ser executado independentemente para testes e depuração:
+
+\begin{lstlisting}[language=bash]
+# 1. Buscar modelo do BioModels
+python3 src/fetch_biomodel.py "repressilator"
+
+# 2. Parsear arquivo SBML para JSON
+python3 src/parse_sbml.py output/<pasta>/modelo.xml
+
+# 3. Gerar visualizacao da Rede de Petri
+python3 src/generate_petri_net.py output/<pasta>/*_parsed.json
+
+# 4. Executar simulacao (metodo, duracao, runs)
+python3 src/simulate_circuit.py output/<pasta>/*_parsed.json \
+        gillespie 500 4
+\end{lstlisting}
+
+Esta modularidade permite iterar rapidamente sobre etapas específicas sem re-executar o pipeline completo.
+
+\subsection{Visualização e Modificação de Parâmetros}
+
+O arquivo \texttt{*\_parsed.json} contém toda a informação do modelo em formato estruturado e editável. A estrutura inclui:
+
+\begin{lstlisting}[basicstyle=\ttfamily\scriptsize]
+{
+  "parameters": [
+    {"id": "kd_mRNA", "value": 0.347},
+    {"id": "k_tl", "value": 6.93}
+  ],
+  "reactions": [
+    {
+      "id": "Reaction1",
+      "name": "degradation of LacI transcripts",
+      "kinetic_law": "kd_mRNA * X",
+      "reactants": [{"species": "X", "stoichiometry": 1.0}]
+    }
+  ]
+}
+\end{lstlisting}
+
+Para modificar parâmetros e testar hipóteses:
+\begin{enumerate}
+    \item Abra o arquivo JSON em um editor de texto
+    \item Localize o parâmetro desejado em \texttt{"parameters"}
+    \item Modifique o campo \texttt{"value"}
+    \item Execute apenas o simulador: \texttt{python3 src/simulate\_circuit.py <json>}
+\end{enumerate}
+
+As fórmulas cinéticas em \texttt{"kinetic\_law"} correspondem aos rótulos visíveis na rede de Petri gerada, permitindo correlacionar visualmente a topologia da rede com as equações matemáticas do modelo. Esta correspondência facilita a compreensão de como cada transição (reação) depende das espécies moleculares e parâmetros do sistema.
+
+%----------------------------------------------------------------------------------------
+%	DISCUSSÃO E CONCLUSÃO
+%----------------------------------------------------------------------------------------
+
+\section{Discussão}
+
+\subsection{Contribuições do Trabalho}
+
+Este estudo apresenta três contribuições principais para a área de modelagem de circuitos genéticos:
+
+\textbf{1. Integração de abordagens complementares}: O pipeline unifica Redes de Petri Estocásticas (visualização topológica), Algoritmo de Gillespie (simulação estocástica) e EDOs (análise determinística) em uma única ferramenta. Esta integração permite ao usuário escolher a abordagem mais adequada para cada problema, ou comparar resultados entre métodos.
+
+\textbf{2. Automação do fluxo de trabalho}: A seleção automática do método de simulação baseada em heurísticas fundamentadas na literatura~\cite{gillespie1977,higham2008} reduz a barreira de entrada para usuários não especialistas, enquanto mantém a flexibilidade para usuários avançados.
+
+\textbf{3. Validação sistemática}: A comparação quantitativa e qualitativa com cinco publicações clássicas~\cite{elowitz2000,gardner2000,boada2016,tseng2012,yildirim2003} estabelece a confiabilidade do pipeline e serve como benchmark para futuras extensões.
+
+\subsection{Comparação com Trabalhos Relacionados}
+
+Ferramentas existentes como COPASI~\cite{karlebach2008} e CellDesigner oferecem funcionalidades similares, porém com interfaces gráficas complexas e curvas de aprendizado íngremes. Nosso pipeline, implementado em Python com módulos independentes, prioriza:
+\begin{itemize}
+    \item \textbf{Transparência}: Código aberto e estrutura JSON editável
+    \item \textbf{Reprodutibilidade}: Execução via linha de comando, integrável em workflows automatizados
+    \item \textbf{Educação}: Visualização clara da correspondência entre topologia (Rede de Petri) e dinâmica (simulação)
+\end{itemize}
+
+\subsection{Limitações e Hipóteses}
+
+O estudo assume que os modelos do BioModels são representativos dos sistemas biológicos reais. As principais limitações identificadas são:
+\begin{itemize}
+    \item \textbf{Escala temporal}: Modelos SBML frequentemente usam unidades de tempo arbitrárias, dificultando comparações diretas com dados experimentais
+    \item \textbf{Parametrização}: Os parâmetros disponíveis no BioModels podem diferir daqueles usados em figuras específicas dos papers originais
+    \item \textbf{Simplificações}: Modelos ODE ignoram ruído estocástico; modelos Gillespie podem ser computacionalmente custosos para sistemas grandes
+\end{itemize}
+
+\section{Conclusão}
+
+Este trabalho apresentou um pipeline automatizado para modelagem e simulação de circuitos genéticos, integrando Redes de Petri Estocásticas, Algoritmo de Gillespie e Equações Diferenciais Ordinárias. A validação com cinco circuitos clássicos demonstrou:
+
+\begin{enumerate}
+    \item \textbf{Repressilator}: Oscilações sustentadas com defasagem de $\sim$120° entre as três proteínas, consistente com Elowitz \& Leibler (2000)~\cite{elowitz2000}
+    \item \textbf{Toggle Switch}: Comportamento biestável demonstrando memória molecular, conforme Gardner et al. (2000)~\cite{gardner2000}
+    \item \textbf{I1-FFL}: Resposta adaptativa característica com retorno ao baseline após perturbação~\cite{boada2016}
+    \item \textbf{Relógio Circadiano}: Oscilações amortecidas capturando a dinâmica FRQ-WCC, com correspondência quantitativa no período ($\sim$21.6 h) e delay mRNA-proteína (3--7 h)~\cite{tseng2012}
+    \item \textbf{Operon Lac}: Cinética de indução e regulação por lactose, confirmando alolactose como verdadeiro indutor~\cite{yildirim2003}
+\end{enumerate}
+
+O pipeline desenvolvido oferece uma ferramenta acessível para educação e pesquisa em biologia sintética, permitindo explorar rapidamente modelos publicados, testar hipóteses através da modificação de parâmetros, e validar comportamentos dinâmicos contra a literatura.
+
+\subsection{Trabalhos Futuros}
+
+Extensões planejadas incluem: análise de sensibilidade paramétrica para identificar parâmetros críticos; suporte a SBML Level 3 com extensões (comp, fbc); interface web interativa; e integração com ferramentas de otimização para design de circuitos \textit{de novo}.
+
+\printbibliography
+
+\end{document}
